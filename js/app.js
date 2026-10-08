@@ -137,6 +137,17 @@
     saveSolo();
   }
   const saveSolo = () => S && S.mode === "solo" && store.set("g151-draft", S);
+  // A saved practice draft from an older version may include Pokemon that are no longer in the pool. Drop it.
+  function loadSolo() {
+    const saved = store.get("g151-draft");
+    if (!saved) return null;
+    const ok = saved.mode === "solo" && Array.isArray(saved.teams) && Array.isArray(saved.order)
+      && saved.teams.every(t => t && t.roster && Object.values(t.roster).every(id => BY_ID.has(id)))
+      && (saved.taken || []).every(id => BY_ID.has(id));
+    if (!ok) { store.del("g151-draft"); return null; }
+    return saved;
+  }
+  const rosterComplete = t => SLOTS.every(s => BY_ID.has(t.roster[s.id]));
 
   function localPick(teamIdx, pid, slotId) {
     S.teams[teamIdx].roster[slotId] = pid;
@@ -323,7 +334,7 @@
   const lastName = () => store.get("g151-name") || "";
 
   function renderHome(errorMsg) {
-    const saved = store.get("g151-draft");
+    const saved = loadSolo();
     const resume = saved && saved.mode === "solo" && !saved.done && saved.pick > 0;
     const qs = new URLSearchParams(location.search);
     const roomFromUrl = (qs.get("join") || qs.get("room") || "").toUpperCase();
@@ -593,6 +604,7 @@
   const seasonCache = {};
   const leagueKey = () => S.mode === "online" ? "room-" + S.roomId : "solo-" + (S.seasonSeed || "legacy");
   function getSeason() {
+    if (!S.teams.every(rosterComplete)) throw new Error("This league has a roster with a Pokémon that's no longer in the game, so its season can't be played.");
     const k = leagueKey();
     if (!seasonCache[k]) seasonCache[k] = E.simSeason(S.teams.map(t => ({ name: t.name, roster: t.roster })), BY_ID, S.seasonSeed || k);
     return seasonCache[k];
@@ -898,7 +910,19 @@
     const winY = window.scrollY;
     const active = document.activeElement && document.activeElement.id;
     const caret = active === "q" ? document.activeElement.selectionStart : null;
-    draw();
+    try { draw(); }
+    catch (e) {
+      console.error(e);
+      setTicker("");
+      app.className = "screen-setup";
+      app.innerHTML = `<section class="setup"><div class="setup-copy">
+        <h1>Something went wrong.</h1>
+        <p class="lede">${esc(e && e.message && /Pokémon/.test(e.message) ? e.message : "This screen couldn't load.")} Start a new draft to keep playing.</p>
+        <div class="share-row"><button class="btn primary" type="button" id="resetBtn">Start over</button></div>
+      </div></section>`;
+      $("#resetBtn").onclick = () => { store.del("g151-draft"); leaveRoom(); S = null; ui = freshUI(); history.replaceState(null, "", location.pathname); render(); };
+      return;
+    }
     const nl = $(".plist"); if (nl) nl.scrollTop = listTop;
     window.scrollTo(0, winY);
     if (active) { const el = document.getElementById(active); if (el) { el.focus({ preventScroll: true }); if (caret != null) el.setSelectionRange(caret, caret); } }
@@ -931,7 +955,7 @@
   } else if (params.has("join") && Net.available) {
     ui.home = "join"; render();
   } else {
-    const saved = store.get("g151-draft");
+    const saved = loadSolo();
     if (saved && saved.mode === "solo" && saved.done) S = saved;
     render();
   }
