@@ -4,7 +4,7 @@ A Pokémon football draft. Each team drafts 22 of the original 151 Pokémon (11 
 
 - **Draft rooms:** the host picks 2–6 teams and a pick timer, then sends a link. Friends join from their own devices and draft live. Unclaimed seats become AI teams.
 - **Practice vs AI:** a 2–6 team draft that runs entirely in the browser.
-- **Two Pokémon pools:** the Original 150 (Mewtwo excluded) or all 1,024 Pokémon with a sprite. Both use the same rating formulas, each scaled against its own pool.
+- **Two Pokémon pools:** the Original 150 (Mewtwo excluded) or all 1,025 Pokémon with a sprite. Both use the same rating formulas, each scaled against its own pool.
 - **Season:** after the draft, every team plays a simulated season (play it week by week or all at once), then playoffs. Every snap is simulated, so a strong line and running back produce big rushing days. You get box scores, standings, league leaders, MVP and defensive player of the year. Every device gets the same results for the same league.
 - **Draft grades** by position group, plus each team's best-value pick and biggest reach.
 - **Chemistry:** bonuses for same-type units, quarterback–receiver type connections and evolution families.

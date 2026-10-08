@@ -925,7 +925,7 @@
   function renderHow() {
     const fmt = f => Object.entries(f).map(([k, w]) => `${w < 0 ? "minus " : ""}${Math.round(Math.abs(w) * 100)}% ${({hp:"HP",attack:"Attack",defense:"Defense",sp_attack:"Sp. Atk",sp_defense:"Sp. Def",speed:"Speed",logw:"weight",logh:"height",maturity:"evolution stage"})[k] || (meta.attrNames[k] || k).toLowerCase()}`).join(", ");
     $("#howBody").innerHTML = `
-      <p>Pick a pool when you set up a draft: the original 150, or every Pokémon with a sprite (${ALL_COUNT.toLocaleString()}). Each pool is rated with the same formulas, scaled against the Pokémon in that pool, so a Pokémon's ratings can differ between pools. Mewtwo is left out of both for balance.</p>
+      <p>Pick a pool when you set up a draft: the original 150, or every Pokémon with a sprite (${ALL_COUNT.toLocaleString()}). Each pool is rated with the same formulas, scaled against the Pokémon in that pool, so a Pokémon's ratings can differ between pools. Mewtwo is left out of the Original 150 for balance; in All Pokémon it has plenty of legendaries to compete with.</p>
       <p>Ratings are calculated, not hand-picked. Each Pokémon's base stats, height and weight feed ten football attributes on a 40–99 scale, where 70 is average among the pool.</p>
       <h3>Attributes</h3>
       <dl class="how">${ATTRS.map(a => `<dt>${meta.attrNames[a]}</dt><dd>${fmt(meta.attrFormulas[a])}</dd>`).join("")}</dl>

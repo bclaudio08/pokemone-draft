@@ -53,8 +53,7 @@ POSITION_WEIGHTS = {
 STAR_OVR = 88       # stars keep their natural best position
 TALENT_WEIGHT = 0.30  # share of every position OVR that comes from base stat total
 
-# Pokemon left out of every draft pool (by Pokedex number). Ratings are scaled across the remaining pool.
-BANNED = {150}  # Mewtwo: too powerful
+# Pokemon left out of a pool are listed per pool under "banned" (by Pokedex number); ratings are scaled across the rest.
 
 # starters per team: QB1 RB1 WR3 TE1 OL5 | DL4 LB3 CB2 S2
 STARTERS = {"QB": 1, "RB": 1, "WR": 3, "TE": 1, "OL": 5, "DL": 4, "LB": 3, "CB": 2, "S": 2}
@@ -62,8 +61,10 @@ STARTERS = {"QB": 1, "RB": 1, "WR": 3, "TE": 1, "OL": 5, "DL": 4, "LB": 3, "CB":
 # Two draft pools, each rated with the same formulas against its own members.
 POOLS = [
     {"key": "gen1", "label": "Original 150", "src": "source_gen1.csv", "json": "pokemon.json", "js": "data.js", "var": "POKEDATA",
+     "banned": {150},  # Mewtwo dominates the original 150
      "quotas": {"QB": 7, "RB": 7, "WR": 21, "TE": 7, "OL": 34, "DL": 27, "LB": 21, "CB": 14, "S": 12}},
     {"key": "all", "label": "All Pokémon", "src": "source_all.csv", "json": "pokemon-all.json", "js": "data-all.js", "var": "POKEDATA_ALL",
+     "banned": set(),  # Mewtwo is back: plenty of legendaries to compete with here
      "quotas": None},  # None = proportional to starters
 ]
 
@@ -87,7 +88,7 @@ def to_rating(z):
 
 
 def build_pool(pool):
-    rows = [r for r in csv.DictReader(open(os.path.join(ROOT, "data", pool["src"]), encoding="utf-8")) if int(r["id"]) not in BANNED]
+    rows = [r for r in csv.DictReader(open(os.path.join(ROOT, "data", pool["src"]), encoding="utf-8")) if int(r["id"]) not in pool["banned"]]
     n = len(rows)
     QUOTAS = pool["quotas"] or proportional_quotas(n)
     assert sum(QUOTAS.values()) == n, (sum(QUOTAS.values()), n)
