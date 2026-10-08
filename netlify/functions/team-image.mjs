@@ -1,7 +1,7 @@
 // /team-image?n=...&r=... : 1200x630 PNG for link previews, showing the team's formation, rating, grade and record.
 // Renderer (resvg, WebAssembly) and fonts are loaded from the site's own /assets/og/ folder, so nothing needs installing.
 import { initWasm, Resvg } from "../lib/resvg.mjs";
-import { decodeTeam, summary, esc, BY_ID, E } from "../lib/team.mjs";
+import { decodeTeam, summary, esc, E } from "../lib/team.mjs";
 
 let assets = null;
 const sprites = new Map();
@@ -44,6 +44,7 @@ const TURF = "#1E5B3B", TURF2 = "#236843", CHALK = "#F2F4EC", FLAG = "#F2C200", 
 async function render(team, origin) {
   const { fonts } = await getAssets(origin);
   const { rating, status } = summary(team);
+  const BY_ID = team.byId;
   const chem = E.chemistry(team.roster, BY_ID);
 
   // field on the right, same formation as the app
@@ -64,7 +65,7 @@ async function render(team, origin) {
 
   // name sized to fit the left column
   // Big Shoulders runs about 0.4em per character; wrap to two lines when one line would get too small
-  const fit = s => Math.min(112, Math.floor(600 / (Math.max(6, s.length) * 0.42)));
+  const fit = s => Math.min(112, Math.floor(590 / (Math.max(6, s.length) * 0.5)));
   let lines = [team.name];
   if (fit(team.name) < 70 && team.name.includes(" ")) {
     const mid = team.name.length / 2;
@@ -84,7 +85,7 @@ async function render(team, origin) {
     ${status ? `<text x="62" y="${(lines.length > 1 ? 180 : 210) + nameSize * 0.35 + (lines.length - 1) * nameSize * 0.95 + 58}" font-family="Barlow" font-weight="600" font-size="32" fill="${FLAG}">${esc(status)}</text>` : ""}
     ${bigNum(60, String(rating.ovr), "Team rating", CHALK)}
     ${team.grade ? bigNum(300, team.grade, "Draft grade", FLAG) : ""}
-    <text x="62" y="596" font-family="Barlow" font-weight="600" font-size="22" fill="${CHALK}" fill-opacity="0.65">Draft the original 151 Pokémon onto a football team.</text>
+    <text x="62" y="596" font-family="Barlow" font-weight="600" font-size="22" fill="${CHALK}" fill-opacity="0.65">Draft Pokémon onto a football team and play the season.</text>
     <rect x="${fx - 4}" y="${fy - 4}" width="${fw + 8}" height="${fh + 8}" rx="12" fill="${CHALK}"/>
     <clipPath id="f"><rect x="${fx}" y="${fy}" width="${fw}" height="${fh}" rx="9"/></clipPath>
     <g clip-path="url(#f)">${stripes}<rect x="${fx}" y="${fy + fh / 2 - 2}" width="${fw}" height="4" fill="${FLAG}"/></g>

@@ -2,18 +2,46 @@
 (() => {
   "use strict";
 
-  const { meta, pokemon: POKEMON } = window.POKEDATA;
-  const BY_ID = new Map(POKEMON.map(p => [p.id, p]));
+  /* Draft pools: "gen1" (Original 150, always loaded) and "all" (every Pokemon with a sprite, loaded on demand).
+     The rest of the app reads the active pool through these variables; usePool() switches them. */
+  const POOL_FILES = { all: { file: "js/data-all.js", global: "POKEDATA_ALL" } };
+  const POOL_DATA = {};
+  let POOL = "gen1", meta, POKEMON, BY_ID, TYPES;
+  function registerPool(key, payload) {
+    const byId = new Map(payload.pokemon.map(p => [p.id, p]));
+    POOL_DATA[key] = { meta: payload.meta, pokemon: payload.pokemon, byId, types: [...new Set(payload.pokemon.flatMap(p => p.types))].sort() };
+  }
+  function usePool(key) {
+    const d = POOL_DATA[key] || POOL_DATA.gen1;
+    POOL = POOL_DATA[key] ? key : "gen1";
+    meta = d.meta; POKEMON = d.pokemon; BY_ID = d.byId; TYPES = d.types;
+  }
+  const poolLoads = {};
+  function ensurePool(key) {
+    if (POOL_DATA[key] || !POOL_FILES[key]) return Promise.resolve();
+    if (!poolLoads[key]) poolLoads[key] = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = POOL_FILES[key].file;
+      s.onload = () => { registerPool(key, window[POOL_FILES[key].global]); resolve(); };
+      s.onerror = () => { delete poolLoads[key]; reject(new Error("Couldn't load the Pokémon list. Check your connection and try again.")); };
+      document.head.appendChild(s);
+    });
+    return poolLoads[key];
+  }
+  const poolKey = v => v === "all" ? "all" : "gen1";
+  const poolLabel = key => key === "all" ? `All Pokémon` : "Original 150";
+  const ALL_COUNT = ((window.G151_NORMS || {}).all || {}).count || 1024; // pool size, shown before the big list loads
+  registerPool("gen1", window.POKEDATA);
+  usePool("gen1");
   const Net = window.G151Net;
 
   const SOLO_TEAMS = 6;
   const AI_DELAY = 420;
 
   const E = window.G151Engine;
-  const NORMS = window.G151_NORMS || { norms: {}, adp: {} };
+  const normsFor = () => (window.G151_NORMS || {})[POOL] || { norms: {}, adp: {} };
   const { SLOTS, SHARE_ORDER, SLOT_BY_ID, ROUNDS, POSITIONS, POS_NAMES, GROUP_NAMES, AI_STYLES, STYLE_KEYS } = E;
   const ATTRS = Object.keys(meta.attrNames);
-  const TYPES = [...new Set(POKEMON.flatMap(p => p.types))].sort();
   const TYPE_COLORS = {
     normal:"#A8A77A", fire:"#EE8130", water:"#6390F0", electric:"#F7D02C", grass:"#7AC74C", ice:"#96D9D6",
     fighting:"#C22E28", poison:"#A33EA1", ground:"#E2BF65", flying:"#A98FF3", psychic:"#F95587", bug:"#A6B91A",
@@ -122,7 +150,8 @@
 
   /* ----- practice (local) ----- */
 
-  function newPractice(teamName, slot, numTeams, orderType) {
+  function newPractice(teamName, slot, numTeams, orderType, pool) {
+    usePool(poolKey(pool));
     const n = Math.min(6, Math.max(2, Number(numTeams) || SOLO_TEAMS));
     const names = [...AI_NAMES].sort(() => Math.random() - 0.5);
     const user = slot === "random" || Number(slot) > n ? Math.floor(Math.random() * n) : Number(slot) - 1;
@@ -131,7 +160,7 @@
       style: i === user ? null : STYLE_KEYS[Math.floor(Math.random() * STYLE_KEYS.length)],
       fav: TYPES[Math.floor(Math.random() * TYPES.length)],
     }));
-    S = { mode: "solo", teams, user, pick: 0, order: teams.map((_, i) => i), taken: [], log: [], done: false,
+    S = { mode: "solo", pool: POOL, teams, user, pick: 0, order: teams.map((_, i) => i), taken: [], log: [], done: false,
           orderType: orderType === "linear" ? "linear" : "snake",
           seasonSeed: Math.random().toString(36).slice(2, 10) };
     saveSolo();
@@ -141,6 +170,9 @@
   function loadSolo() {
     const saved = store.get("g151-draft");
     if (!saved) return null;
+    const pk = poolKey(saved.pool);
+    if (!POOL_DATA[pk]) return null; // big pool not loaded yet; boot loads it first when needed
+    usePool(pk);
     const ok = saved.mode === "solo" && Array.isArray(saved.teams) && Array.isArray(saved.order)
       && saved.teams.every(t => t && t.roster && Object.values(t.roster).every(id => BY_ID.has(id)))
       && (saved.taken || []).every(id => BY_ID.has(id));
@@ -190,7 +222,7 @@
       teams, user: mine ? mine.seat : -1, pick: r.pick, order: r.draft_order || [],
       taken: snap.picks.map(p => p.pid),
       log: snap.picks.map(p => ({ pick: p.pick_no, team: p.seat, pid: p.pid, slot: p.slot, auto: p.auto })),
-      done: r.status === "done", seasonSeed: r.id, orderType: r.draft_type || "snake",
+      done: r.status === "done", seasonSeed: r.id, orderType: r.draft_type || "snake", pool: poolKey(r.pool),
     };
   }
 
@@ -219,6 +251,8 @@
     catch (e) { online.busy = false; if (force) roomError(e.message); return; }
     online.busy = false;
     if (!snap || !snap.room) { const c = online.code; leaveRoom(); return roomError(`No room with code ${c}. Check the code and try again.`); }
+    try { await ensurePool(poolKey(snap.room.pool)); } catch (e) { if (force) roomError(e.message); return; }
+    usePool(poolKey(snap.room.pool));
     const next = fromSnapshot(snap);
     const sig = [next.status, next.pick, snap.seats.map(s => `${s.team_name}|${s.claimed}|${s.is_ai}`).join(",")].join(";");
     const changed = force || sig !== online.sig;
@@ -276,6 +310,7 @@
   function encodeTeam(team, extra = {}) {
     const ids = SHARE_ORDER.map(id => (team.roster[id] || 0).toString(36).padStart(2, "0")).join("");
     let q = `?n=${encodeURIComponent(team.name)}&r=${ids}`;
+    if (POOL !== "gen1") q += `&p=${POOL}`;
     if (extra.g) q += `&g=${encodeURIComponent(extra.g)}`;
     if (extra.rec) q += `&rec=${encodeURIComponent(extra.rec)}`;
     if (extra.c) q += `&c=1`;
@@ -347,7 +382,7 @@
     app.innerHTML = `
       <section class="setup">
         <div class="setup-copy">
-          <h1>Draft the original 151 onto a football team.</h1>
+          <h1>Draft Pokémon onto a football team.</h1>
           <p class="lede">Each team drafts 22 Pokémon: 11 on offense, 11 on defense. Start a room and send the link to friends, or practice against AI.</p>
           <p class="fine">Every Pokémon is rated at all nine positions from its real base stats, height and weight, so a great quarterback might be a decent running back.</p>
           <div class="modes" role="tablist" aria-label="How do you want to draft?">
@@ -359,6 +394,7 @@
             <label>Your team name<input name="name" maxlength="28" placeholder="Pallet Town Pros" value="${esc(lastName())}" autocomplete="off" required></label>
             <fieldset><legend>Number of teams</legend>${seg("teams", [2,3,4,5,6], 4)}</fieldset>
             <fieldset><legend>Time per pick</legend>${seg("timer", [0,30,60,90], 60, v => v ? v + " sec" : "No limit")}</fieldset>
+            <fieldset><legend>Pokémon pool</legend>${seg("pool", ["gen1","all"], store.get("g151-pool") || "gen1", v => v === "gen1" ? "Original 150" : `All Pokémon (${ALL_COUNT.toLocaleString()})`)}</fieldset>
             <fieldset><legend>Draft order</legend>${seg("order", ["snake","linear"], store.get("g151-order") || "snake", v => v === "snake" ? "Snake" : "Same every round")}</fieldset>
             <p class="fine">Snake reverses the order every round, so the team that picks last in round 1 picks first in round 2. Same every round keeps one order all draft.</p>
             <p class="fine">Seats nobody claims become AI teams when you start the draft.</p>
@@ -374,6 +410,7 @@
           <form id="soloForm" class="setup-form">
             <label>Team name<input name="name" maxlength="28" placeholder="Pallet Town Pros" value="${esc(lastName())}" autocomplete="off" required></label>
             <fieldset><legend>Number of teams</legend>${seg("teams", [2,3,4,5,6], store.get("g151-solo-teams") || 6)}</fieldset>
+            <fieldset><legend>Pokémon pool</legend>${seg("pool", ["gen1","all"], store.get("g151-pool") || "gen1", v => v === "gen1" ? "Original 150" : `All Pokémon (${ALL_COUNT.toLocaleString()})`)}</fieldset>
             <fieldset><legend>Draft order</legend>${seg("order", ["snake","linear"], store.get("g151-order") || "snake", v => v === "snake" ? "Snake" : "Same every round")}</fieldset>
             <fieldset><legend>Your draft slot</legend><div id="slotSeg"></div></fieldset>
             <button class="btn primary" type="submit">Start practice draft</button>
@@ -391,7 +428,8 @@
       const btn = e.target.querySelector("[type=submit]"); btn.dataset.label = btn.textContent; busy(e.target, true);
       try {
         store.set("g151-order", fd.get("order"));
-        const code = await roomCall("g151_create_room", { p_num_teams: +fd.get("teams"), p_pick_seconds: +fd.get("timer"), p_team_name: fd.get("name"), p_draft_type: fd.get("order") });
+        store.set("g151-pool", fd.get("pool"));
+        const code = await roomCall("g151_create_room", { p_num_teams: +fd.get("teams"), p_pick_seconds: +fd.get("timer"), p_team_name: fd.get("name"), p_draft_type: fd.get("order"), p_pool: poolKey(fd.get("pool")) });
         ui = freshUI(); await openRoom(code);
       } catch { busy(e.target, false); }
     });
@@ -414,14 +452,18 @@
       drawSlots();
       soloForm.querySelectorAll("input[name=teams]").forEach(r => r.addEventListener("change", drawSlots));
     }
-    soloForm?.addEventListener("submit", e => {
+    soloForm?.addEventListener("submit", async e => {
       e.preventDefault();
       const fd = new FormData(e.target); store.set("g151-name", fd.get("name")); store.set("g151-solo-teams", +fd.get("teams"));
-      store.set("g151-order", fd.get("order"));
-      newPractice(fd.get("name"), fd.get("slot"), fd.get("teams"), fd.get("order"));
+      store.set("g151-order", fd.get("order")); store.set("g151-pool", fd.get("pool"));
+      const btn = e.target.querySelector("[type=submit]");
+      btn.disabled = true; btn.textContent = "Loading Pokémon…";
+      try { await ensurePool(poolKey(fd.get("pool"))); }
+      catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = "Start practice draft"; return; }
+      newPractice(fd.get("name"), fd.get("slot"), fd.get("teams"), fd.get("order"), fd.get("pool"));
       ui = freshUI(); runAI();
     });
-    $("#resumeBtn")?.addEventListener("click", () => { S = saved; ui = freshUI(); runAI(); });
+    $("#resumeBtn")?.addEventListener("click", () => { usePool(poolKey(saved.pool)); S = saved; ui = freshUI(); runAI(); });
   }
 
   function renderLobby() {
@@ -440,8 +482,8 @@
             ${S.isHost ? `<button class="btn ghost" type="button" id="startBtn">Start draft (${filled} of ${n} seats filled)</button>` : ""}
           </div>
           <p class="fine">${S.isHost
-            ? (filled < n ? `${n - filled} open ${n - filled === 1 ? "seat becomes an AI team" : "seats become AI teams"} when you start. ` : "") + `${S.orderType === "linear" ? "Same order every round" : "Snake draft"}, with the order randomized at the start. ${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds; when time runs out, the best available player is picked automatically.` : "There's no pick timer."}`
-            : `Waiting for ${esc(host.name)} to start the draft. ${S.orderType === "linear" ? "Same order every round. " : "Snake draft. "}${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds.` : ""}`}</p>
+            ? (filled < n ? `${n - filled} open ${n - filled === 1 ? "seat becomes an AI team" : "seats become AI teams"} when you start. ` : "") + `${poolLabel(S.pool)}. ${S.orderType === "linear" ? "Same order every round" : "Snake draft"}, with the order randomized at the start. ${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds; when time runs out, the best available player is picked automatically.` : "There's no pick timer."}`
+            : `Waiting for ${esc(host.name)} to start the draft. ${poolLabel(S.pool)}. ${S.orderType === "linear" ? "Same order every round. " : "Snake draft. "}${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds.` : ""}`}</p>
         </div>
         <ol class="seats">
           ${S.teams.map((t, i) => `<li class="${i === S.user ? "mine" : ""} ${t.claimed ? "" : "open"}">
@@ -508,13 +550,14 @@
           ${ui.pos !== "BEST" ? `<label class="check"><input type="checkbox" id="natural" ${ui.natural ? "checked" : ""}> Natural ${ui.pos}s only</label>` : ""}
         </div>
         <ol class="plist">
-          ${rows.map(({ p, v, at }) => `
+          ${rows.slice(0, ui.q.trim() ? 400 : 200).map(({ p, v, at }) => `
             <li><button type="button" class="prow ${sel && sel.id === p.id ? "is-sel" : ""}" data-pid="${p.id}">
               ${sprite(p, "sm")}
               <span class="prow-name">${esc(p.name)}<small>${p.types.join(" / ")}, natural ${p.pos}</small></span>
               <span class="prow-at">${at}</span>
               <b class="prow-v ${ovrClass(v)}">${v}</b>
             </button></li>`).join("") || `<li class="empty-list">No available Pokémon match. Clear the search or type filter.</li>`}
+          ${rows.length > (ui.q.trim() ? 400 : 200) ? `<li class="empty-list">Showing the top ${ui.q.trim() ? 400 : 200} of ${rows.length}. Search or filter by type to find others.</li>` : ""}
         </ol>
       </section>
       <section class="card-col panel" aria-label="Selected player">
@@ -715,9 +758,9 @@
 
   function gradesTab() {
     const n = S.teams.length;
-    const rows = S.teams.map((t, i) => ({ t, i, g: E.grades(t.roster, BY_ID, n, NORMS.norms) })).sort((a, b) => b.g.TEAM.z - a.g.TEAM.z);
+    const rows = S.teams.map((t, i) => ({ t, i, g: E.grades(t.roster, BY_ID, n, normsFor().norms) })).sort((a, b) => b.g.TEAM.z - a.g.TEAM.z);
     const value = i => {
-      const picks = S.log.filter(l => l.team === i).map(l => ({ ...l, adp: NORMS.adp[l.pid], no: l.pick + 1 })).filter(l => l.adp);
+      const picks = S.log.filter(l => l.team === i).map(l => ({ ...l, adp: normsFor().adp[l.pid], no: l.pick + 1 })).filter(l => l.adp);
       const steal = picks.slice().sort((a, b) => (b.no - b.adp) - (a.no - a.adp))[0];
       const reach = picks.slice().sort((a, b) => (a.no - a.adp) - (b.no - b.adp))[0];
       const out = [];
@@ -767,7 +810,7 @@
     const meIdx = spectator ? table[0].team : S.user;
     const me = S.teams[meIdx];
     const r = teamRatings(me.roster);
-    const gr = E.grades(me.roster, BY_ID, S.teams.length, NORMS.norms);
+    const gr = E.grades(me.roster, BY_ID, S.teams.length, normsFor().norms);
     const myRec = table.find(x => x.team === meIdx);
     const tab = ui.rtab || "season";
     setTicker(`<span class="tk-round">${S.mode === "online" ? `Room ${esc(S.code)}: ` : ""}${done ? "season complete" : prog ? `after ${R[prog - 1].label.toLowerCase()}` : "draft complete"}</span>`);
@@ -882,7 +925,7 @@
   function renderHow() {
     const fmt = f => Object.entries(f).map(([k, w]) => `${w < 0 ? "minus " : ""}${Math.round(Math.abs(w) * 100)}% ${({hp:"HP",attack:"Attack",defense:"Defense",sp_attack:"Sp. Atk",sp_defense:"Sp. Def",speed:"Speed",logw:"weight",logh:"height",maturity:"evolution stage"})[k] || (meta.attrNames[k] || k).toLowerCase()}`).join(", ");
     $("#howBody").innerHTML = `
-      <p>Mewtwo is left out of the draft pool for balance, so 150 Pokémon are available.</p>
+      <p>Pick a pool when you set up a draft: the original 150, or every Pokémon with a sprite (${ALL_COUNT.toLocaleString()}). Each pool is rated with the same formulas, scaled against the Pokémon in that pool, so a Pokémon's ratings can differ between pools. Mewtwo is left out of both for balance.</p>
       <p>Ratings are calculated, not hand-picked. Each Pokémon's base stats, height and weight feed ten football attributes on a 40–99 scale, where 70 is average among the pool.</p>
       <h3>Attributes</h3>
       <dl class="how">${ATTRS.map(a => `<dt>${meta.attrNames[a]}</dt><dd>${fmt(meta.attrFormulas[a])}</dd>`).join("")}</dl>
@@ -928,6 +971,7 @@
     if (active) { const el = document.getElementById(active); if (el) { el.focus({ preventScroll: true }); if (caret != null) el.setSelectionRange(caret, caret); } }
   }
   function draw() {
+    if (S) usePool(poolKey(S.pool));
     if (!S) return renderHome();
     if (S.mode === "online") {
       if (S.status === "lobby") return S.user < 0 ? (ui.home = "join", renderHome()) : renderLobby();
@@ -946,19 +990,26 @@
   $("#howBtn").onclick = () => { renderHow(); $("#howDialog").showModal(); };
 
   const params = new URLSearchParams(location.search);
-  if (params.has("r")) {
-    const shared = decodeTeam(params);
-    shared ? renderShared(shared) : render();
-  } else if (params.has("room") && Net.available) {
-    app.innerHTML = `<p class="loading">Connecting to room ${esc(params.get("room").toUpperCase())}…</p>`;
-    openRoom(params.get("room"));
-  } else if (params.has("join") && Net.available) {
-    ui.home = "join"; render();
-  } else {
+  (async () => {
+    if (params.has("r")) {
+      const key = poolKey(params.get("p"));
+      try { await ensurePool(key); } catch {}
+      usePool(key);
+      const shared = decodeTeam(params);
+      return shared ? renderShared(shared) : render();
+    }
+    if (params.has("room") && Net.available) {
+      app.innerHTML = `<p class="loading">Connecting to room ${esc(params.get("room").toUpperCase())}…</p>`;
+      return openRoom(params.get("room"));
+    }
+    if (params.has("join") && Net.available) { ui.home = "join"; return render(); }
+    const raw = store.get("g151-draft");
+    if (raw && poolKey(raw.pool) !== "gen1") { try { await ensurePool(poolKey(raw.pool)); } catch {} }
     const saved = loadSolo();
     if (saved && saved.mode === "solo" && saved.done) S = saved;
+    else usePool("gen1");
     render();
-  }
+  })();
 
-  window.__g151 = { get state() { return S; }, SLOTS, encodeTeam, season: () => (S && S.done ? getSeason() : null) };
+  window.__g151 = { get state() { return S; }, get pool() { return POOL; }, SLOTS, encodeTeam, season: () => (S && S.done ? getSeason() : null) };
 })();

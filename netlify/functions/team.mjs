@@ -13,7 +13,7 @@ export default async (req) => {
   const { rating, status } = summary(team);
   const title = `${team.name} | Gridiron 151`;
   const desc = [status, `Team rating ${rating.ovr}`, team.grade ? `draft grade ${team.grade}` : null].filter(Boolean).join(", ")
-    + ". Draft the original 151 Pokémon onto a football team.";
+    + ". Draft Pokémon onto a football team and play the season.";
   const image = `${url.origin}/team-image${url.search}`;
 
   const html = `<!doctype html>

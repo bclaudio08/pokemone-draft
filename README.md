@@ -4,6 +4,7 @@ A Pokémon football draft. Each team drafts 22 of the original 151 Pokémon (11 
 
 - **Draft rooms:** the host picks 2–6 teams and a pick timer, then sends a link. Friends join from their own devices and draft live. Unclaimed seats become AI teams.
 - **Practice vs AI:** a 2–6 team draft that runs entirely in the browser.
+- **Two Pokémon pools:** the Original 150 (Mewtwo excluded) or all 1,024 Pokémon with a sprite. Both use the same rating formulas, each scaled against its own pool.
 - **Season:** after the draft, every team plays a simulated season (play it week by week or all at once), then playoffs. Every snap is simulated, so a strong line and running back produce big rushing days. You get box scores, standings, league leaders, MVP and defensive player of the year. Every device gets the same results for the same league.
 - **Draft grades** by position group, plus each team's best-value pick and biggest reach.
 - **Chemistry:** bonuses for same-type units, quarterback–receiver type connections and evolution families.
@@ -42,10 +43,12 @@ Then open http://localhost:8000. Opening `index.html` directly also works.
 | Path | What it is |
 |---|---|
 | `index.html`, `css/`, `js/app.js` | The app |
-| `js/data.js`, `data/pokemon.json` | Generated ratings (same data, two formats) |
+| `js/data.js`, `data/pokemon.json` | Generated ratings for the Original 150 pool |
+| `js/data-all.js`, `data/pokemon-all.json` | Generated ratings for the All Pokémon pool (loaded only when that pool is picked) |
+| `data/source_all.csv` | Base stats etc. for #1–1025 (PokeAPI open data) |
 | `data/source_gen1.csv` | Base stats, types, height, weight, evolution stage for #1–151 (PokeAPI open data) |
 | `scripts/build_data.py` | Turns the source CSV into ratings. Rerun after changing any formula |
-| `sprites/001.png`–`151.png` | Sprites from github.com/PokeAPI/sprites |
+| `sprites/001.png`–`1025.png` | Sprites from github.com/PokeAPI/sprites |
 | `og.png` | Social preview image |
 | `js/net.js`, `js/config.js`, `js/vendor/supabase.js` | Draft-room connection (Supabase client v2.45.4, bundled) |
 | `supabase/schema.sql` | Database tables, security rules and draft functions |

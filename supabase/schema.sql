@@ -55,16 +55,29 @@ create table if not exists public.g151_slots (
   pos  text not null
 );
 
-create table if not exists public.g151_ratings (
-  pid int  not null,
-  pos text not null,
-  ovr int  not null,
-  primary key (pid, pos)
+alter table public.g151_rooms add column if not exists pool text not null default 'gen1';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'g151_rooms_pool_check') then
+    alter table public.g151_rooms add constraint g151_rooms_pool_check check (pool in ('gen1', 'all'));
+  end if;
+end $$;
+
+-- ratings are pure reference data (reloaded at the bottom of this script), one set per draft pool
+drop table if exists public.g151_ratings;
+create table public.g151_ratings (
+  pool text not null,
+  pid  int  not null,
+  pos  text not null,
+  ovr  int  not null,
+  primary key (pool, pid, pos)
 );
 
-create table if not exists public.g151_pokemon (
-  pid   int primary key,
-  types text[] not null
+drop table if exists public.g151_pokemon;
+create table public.g151_pokemon (
+  pool  text not null,
+  pid   int  not null,
+  types text[] not null,
+  primary key (pool, pid)
 );
 
 -- ---------- row level security: everyone can read, nobody writes directly ----------
@@ -149,27 +162,30 @@ drop function if exists public.g151_best_pick(uuid, int);
 create or replace function public.g151_best_pick(p_room_id uuid, p_seat int, out pid int, out slot text)
 language plpgsql security definer set search_path = public as $$
 declare
-  v_style text; v_fav text; k numeric;
+  v_style text; v_fav text; k numeric; v_pool text;
 begin
   select coalesce(style, 'balanced'), fav_type into v_style, v_fav from g151_seats where room_id = p_room_id and seat = p_seat;
+  select coalesce(pool, 'gen1') into v_pool from g151_rooms where id = p_room_id;
   k := case when v_style = 'stars' then 2.4 else 1 end;
-  with avail as (
+  with avail as materialized (
     select r.pid, r.pos, r.ovr from g151_ratings r
-    where not exists (select 1 from g151_picks p where p.room_id = p_room_id and p.pid = r.pid)
-  ), demand as (
+    where r.pool = v_pool and not exists (select 1 from g151_picks p where p.room_id = p_room_id and p.pid = r.pid)
+  ), demand as materialized (
     select s.pos, count(*)::int as d
     from g151_seats se cross join g151_slots s
     where se.room_id = p_room_id
       and not exists (select 1 from g151_picks p where p.room_id = p_room_id and p.seat = se.seat and p.slot = s.slot)
     group by s.pos
-  ), ranked as (
+  ), ranked as materialized (
     select a.pos, a.ovr, (row_number() over (partition by a.pos order by a.ovr desc) - 1)::int as rk,
            count(*) over (partition by a.pos)::int as cnt
     from avail a
-  ), repl as (
-    select d.pos, coalesce((select r.ovr from ranked r where r.pos = d.pos and r.rk = least(d.d, r.cnt - 1)), 40) as rv
-    from demand d
-  ), open_slots as (
+  ), repl as materialized (
+    -- replacement level: the player who'd be left at each position once every open spot league-wide is filled
+    select d.pos, coalesce(max(r.ovr) filter (where r.rk = least(d.d, r.cnt - 1)), 40) as rv
+    from demand d left join ranked r on r.pos = d.pos
+    group by d.pos
+  ), open_slots as materialized (
     select distinct on (s.pos) s.slot, s.pos from g151_slots s
     where not exists (select 1 from g151_picks p where p.room_id = p_room_id and p.seat = p_seat and p.slot = s.slot)
     order by s.pos, s.slot
@@ -178,7 +194,7 @@ begin
   from avail a
   join open_slots o on o.pos = a.pos
   join repl rp on rp.pos = a.pos
-  left join g151_pokemon pk on pk.pid = a.pid
+  left join g151_pokemon pk on pk.pool = v_pool and pk.pid = a.pid
   order by (g151_star(a.ovr, k) - g151_star(rp.rv, k)) * g151_style_mult(v_style, a.pos)
          + (case when v_style = 'loyal' and v_fav is not null and v_fav = any(pk.types) then 7 else 0 end)
          + random() * 4 - 2 desc
@@ -187,7 +203,8 @@ end $$;
 
 -- ---------- functions the website calls ----------
 drop function if exists public.g151_create_room(int, int, text);
-create or replace function public.g151_create_room(p_num_teams int, p_pick_seconds int, p_team_name text, p_draft_type text default 'snake')
+drop function if exists public.g151_create_room(int, int, text, text);
+create or replace function public.g151_create_room(p_num_teams int, p_pick_seconds int, p_team_name text, p_draft_type text default 'snake', p_pool text default 'gen1')
 returns text language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
@@ -201,6 +218,7 @@ begin
   if p_num_teams not between 2 and 6 then raise exception 'Pick 2 to 6 teams'; end if;
   if p_pick_seconds not in (0, 30, 60, 90) then raise exception 'Invalid pick timer'; end if;
   if coalesce(p_draft_type, 'snake') not in ('snake', 'linear') then raise exception 'Invalid draft order'; end if;
+  if coalesce(p_pool, 'gen1') not in ('gen1', 'all') then raise exception 'Invalid Pokémon pool'; end if;
 
   loop
     v_code := '';
@@ -208,8 +226,8 @@ begin
       v_code := v_code || substr(alphabet, 1 + floor(random() * length(alphabet))::int, 1);
     end loop;
     begin
-      insert into g151_rooms (code, host, num_teams, pick_seconds, draft_type)
-      values (v_code, uid, p_num_teams, p_pick_seconds, coalesce(p_draft_type, 'snake')) returning id into v_id;
+      insert into g151_rooms (code, host, num_teams, pick_seconds, draft_type, pool)
+      values (v_code, uid, p_num_teams, p_pick_seconds, coalesce(p_draft_type, 'snake'), coalesce(p_pool, 'gen1')) returning id into v_id;
       exit;
     exception when unique_violation then
       -- code collision, try another
@@ -307,7 +325,7 @@ begin
 
   select pos into v_pos from g151_slots where slot = p_slot;
   if v_pos is null then raise exception 'Unknown roster spot'; end if;
-  if not exists (select 1 from g151_ratings where pid = p_pid) then raise exception 'Unknown Pokémon'; end if;
+  if not exists (select 1 from g151_ratings where pool = r.pool and pid = p_pid) then raise exception 'That Pokémon isn''t in this draft''s pool'; end if;
   if exists (select 1 from g151_picks where room_id = r.id and pid = p_pid) then
     raise exception 'That Pokémon was already drafted';
   end if;
@@ -351,7 +369,7 @@ create or replace function public.g151_get_room(p_code text)
 returns json language sql stable security definer set search_path = public as $$
   select json_build_object(
     'room', (select json_build_object(
-        'id', id, 'code', code, 'num_teams', num_teams, 'pick_seconds', pick_seconds, 'draft_type', draft_type,
+        'id', id, 'code', code, 'num_teams', num_teams, 'pick_seconds', pick_seconds, 'draft_type', draft_type, 'pool', pool,
         'status', status, 'pick', pick, 'draft_order', draft_order, 'deadline', deadline,
         'is_host', host = auth.uid())
       from g151_rooms where code = upper(btrim(p_code))),
@@ -371,7 +389,7 @@ revoke all on function public.g151_do_pick(public.g151_rooms, int, int, text, bo
 revoke all on function public.g151_best_pick(uuid, int) from public;
 revoke all on function public.g151_style_mult(text, text) from public;
 revoke all on function public.g151_star(numeric, numeric) from public;
-revoke all on function public.g151_create_room(int, int, text, text) from public;
+revoke all on function public.g151_create_room(int, int, text, text, text) from public;
 revoke all on function public.g151_join_room(text, text) from public;
 revoke all on function public.g151_start_room(text) from public;
 revoke all on function public.g151_make_pick(text, int, text) from public;
@@ -384,7 +402,7 @@ do $$ begin
     revoke all on function public.g151_best_pick(uuid, int) from anon, authenticated;
     revoke all on function public.g151_style_mult(text, text) from anon, authenticated;
     revoke all on function public.g151_star(numeric, numeric) from anon, authenticated;
-    grant execute on function public.g151_create_room(int, int, text, text) to authenticated;
+    grant execute on function public.g151_create_room(int, int, text, text, text) to authenticated;
     grant execute on function public.g151_join_room(text, text) to authenticated;
     grant execute on function public.g151_start_room(text) to authenticated;
     grant execute on function public.g151_make_pick(text, int, text) to authenticated;

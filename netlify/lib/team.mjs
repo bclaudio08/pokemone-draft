@@ -1,12 +1,15 @@
 // Shared helpers for the link-preview functions: decode a shared team from the URL and summarize it.
 import E from "../../js/engine.js";
-import data from "../../data/pokemon.json";
+import gen1 from "../../data/pokemon.json";
+import all from "../../data/pokemon-all.json";
 
-export const POKEMON = data.pokemon;
-export const BY_ID = new Map(POKEMON.map(p => [p.id, p]));
+// each draft pool has its own ratings; shared links say which one with p=all
+const POOLS = { gen1: new Map(gen1.pokemon.map(p => [p.id, p])), all: new Map(all.pokemon.map(p => [p.id, p])) };
+export const poolFor = searchParams => POOLS[searchParams.get("p") === "all" ? "all" : "gen1"];
 export { E };
 
 export function decodeTeam(searchParams) {
+  const BY_ID = poolFor(searchParams);
   const r = searchParams.get("r") || "";
   if (r.length !== E.SHARE_ORDER.length * 2) return null;
   const roster = {};
@@ -18,7 +21,7 @@ export function decodeTeam(searchParams) {
   const g = searchParams.get("g"), rec = searchParams.get("rec");
   return {
     name: (searchParams.get("n") || "Gridiron 151 team").slice(0, 40),
-    roster,
+    roster, byId: BY_ID,
     grade: g && /^[A-D][+-]?$/.test(g) ? g : null,
     rec: rec && /^\d{1,2}-\d{1,2}(-\d{1,2})?$/.test(rec) ? rec : null,
     champ: searchParams.get("c") === "1",
@@ -26,7 +29,7 @@ export function decodeTeam(searchParams) {
 }
 
 export function summary(team) {
-  const r = E.teamRating(team.roster, BY_ID);
+  const r = E.teamRating(team.roster, team.byId);
   const status = team.champ ? `League champions${team.rec ? ` at ${team.rec}` : ""}` : team.rec ? `Record ${team.rec}` : "";
   return { rating: r, status };
 }
