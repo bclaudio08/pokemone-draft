@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gridiron 151 — Pokémon Football Draft</title>
+<meta name="description" content="Draft the original 151 Pokémon onto football teams with friends, live. 11 on offense, 11 on defense.">
+<meta property="og:title" content="Gridiron 151 — Pokémon Football Draft">
+<meta property="og:description" content="Draft the original 151 Pokémon onto a football team. Ratings come from real base stats.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#1E5B3B">
+<link rel="icon" href="sprites/025.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Big+Shoulders+Display:wght@700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="wordmark" href="./" aria-label="Gridiron 151 home">Gridiron <span>151</span></a>
+  <div class="ticker" id="ticker" aria-live="polite"></div>
+  <button class="link-btn" id="howBtn" type="button">How ratings work</button>
+</header>
+
+<main id="app"></main>
+
+<dialog id="howDialog" class="sheet">
+  <div class="sheet-head">
+    <h2>How ratings work</h2>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div id="howBody"></div>
+</dialog>
+
+<dialog id="cardDialog" class="sheet card-sheet">
+  <div class="sheet-head">
+    <span></span>
+    <button class="icon-btn" type="button" data-close aria-label="Close">✕</button>
+  </div>
+  <div id="cardDialogBody"></div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="js/data.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/norms.js"></script>
+<script src="js/config.js"></script>
+<script src="js/vendor/supabase.js"></script>
+<script src="js/net.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

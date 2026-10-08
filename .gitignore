@@ -1,0 +1,6 @@
+# transfer archives and system files
+g151-*.tar.gz
+*.tar.gz
+.DS_Store
+node_modules/
+.netlify/
