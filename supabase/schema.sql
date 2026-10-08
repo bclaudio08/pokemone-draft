@@ -17,6 +17,13 @@ create table if not exists public.g151_rooms (
   created_at    timestamptz not null default now()
 );
 
+alter table public.g151_rooms add column if not exists draft_type text not null default 'snake';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'g151_rooms_draft_type_check') then
+    alter table public.g151_rooms add constraint g151_rooms_draft_type_check check (draft_type in ('snake', 'linear'));
+  end if;
+end $$;
+
 create table if not exists public.g151_seats (
   room_id    uuid not null references public.g151_rooms(id) on delete cascade,
   seat       int  not null,
@@ -88,6 +95,15 @@ returns int language sql immutable as $$
     when (p_pick / array_length(p_order, 1)) % 2 = 0
       then p_order[(p_pick % array_length(p_order, 1)) + 1]
     else p_order[array_length(p_order, 1) - (p_pick % array_length(p_order, 1))]
+  end
+$$;
+
+-- snake reverses the order every other round; linear keeps one order all draft
+create or replace function public.g151_on_clock(p_pick int, p_order int[], p_type text)
+returns int language sql immutable as $$
+  select case
+    when p_type = 'linear' then p_order[(p_pick % array_length(p_order, 1)) + 1]
+    else public.g151_on_clock(p_pick, p_order)
   end
 $$;
 
@@ -170,7 +186,8 @@ begin
 end $$;
 
 -- ---------- functions the website calls ----------
-create or replace function public.g151_create_room(p_num_teams int, p_pick_seconds int, p_team_name text)
+drop function if exists public.g151_create_room(int, int, text);
+create or replace function public.g151_create_room(p_num_teams int, p_pick_seconds int, p_team_name text, p_draft_type text default 'snake')
 returns text language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
@@ -183,6 +200,7 @@ begin
   if name = '' then raise exception 'Enter a team name'; end if;
   if p_num_teams not between 2 and 6 then raise exception 'Pick 2 to 6 teams'; end if;
   if p_pick_seconds not in (0, 30, 60, 90) then raise exception 'Invalid pick timer'; end if;
+  if coalesce(p_draft_type, 'snake') not in ('snake', 'linear') then raise exception 'Invalid draft order'; end if;
 
   loop
     v_code := '';
@@ -190,8 +208,8 @@ begin
       v_code := v_code || substr(alphabet, 1 + floor(random() * length(alphabet))::int, 1);
     end loop;
     begin
-      insert into g151_rooms (code, host, num_teams, pick_seconds)
-      values (v_code, uid, p_num_teams, p_pick_seconds) returning id into v_id;
+      insert into g151_rooms (code, host, num_teams, pick_seconds, draft_type)
+      values (v_code, uid, p_num_teams, p_pick_seconds, coalesce(p_draft_type, 'snake')) returning id into v_id;
       exit;
     exception when unique_violation then
       -- code collision, try another
@@ -285,7 +303,7 @@ begin
 
   select seat into v_seat from g151_seats where room_id = r.id and user_id = uid;
   if v_seat is null then raise exception 'You do not have a team in this room'; end if;
-  if g151_on_clock(r.pick, r.draft_order) <> v_seat then raise exception 'It is not your pick'; end if;
+  if g151_on_clock(r.pick, r.draft_order, r.draft_type) <> v_seat then raise exception 'It is not your pick'; end if;
 
   select pos into v_pos from g151_slots where slot = p_slot;
   if v_pos is null then raise exception 'Unknown roster spot'; end if;
@@ -313,7 +331,7 @@ begin
   select * into r from g151_rooms where code = upper(btrim(p_code)) for update;
   if not found or r.status <> 'drafting' then return false; end if;
 
-  v_seat := g151_on_clock(r.pick, r.draft_order);
+  v_seat := g151_on_clock(r.pick, r.draft_order, r.draft_type);
   select is_ai into v_ai from g151_seats where room_id = r.id and seat = v_seat;
 
   if v_ai and now() >= r.last_pick_at + interval '900 milliseconds' then
@@ -333,7 +351,7 @@ create or replace function public.g151_get_room(p_code text)
 returns json language sql stable security definer set search_path = public as $$
   select json_build_object(
     'room', (select json_build_object(
-        'id', id, 'code', code, 'num_teams', num_teams, 'pick_seconds', pick_seconds,
+        'id', id, 'code', code, 'num_teams', num_teams, 'pick_seconds', pick_seconds, 'draft_type', draft_type,
         'status', status, 'pick', pick, 'draft_order', draft_order, 'deadline', deadline,
         'is_host', host = auth.uid())
       from g151_rooms where code = upper(btrim(p_code))),
@@ -353,7 +371,7 @@ revoke all on function public.g151_do_pick(public.g151_rooms, int, int, text, bo
 revoke all on function public.g151_best_pick(uuid, int) from public;
 revoke all on function public.g151_style_mult(text, text) from public;
 revoke all on function public.g151_star(numeric, numeric) from public;
-revoke all on function public.g151_create_room(int, int, text) from public;
+revoke all on function public.g151_create_room(int, int, text, text) from public;
 revoke all on function public.g151_join_room(text, text) from public;
 revoke all on function public.g151_start_room(text) from public;
 revoke all on function public.g151_make_pick(text, int, text) from public;
@@ -366,7 +384,7 @@ do $$ begin
     revoke all on function public.g151_best_pick(uuid, int) from anon, authenticated;
     revoke all on function public.g151_style_mult(text, text) from anon, authenticated;
     revoke all on function public.g151_star(numeric, numeric) from anon, authenticated;
-    grant execute on function public.g151_create_room(int, int, text) to authenticated;
+    grant execute on function public.g151_create_room(int, int, text, text) to authenticated;
     grant execute on function public.g151_join_room(text, text) to authenticated;
     grant execute on function public.g151_start_room(text) to authenticated;
     grant execute on function public.g151_make_pick(text, int, text) to authenticated;

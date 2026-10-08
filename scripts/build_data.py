@@ -55,8 +55,11 @@ STAR_OVR = 88       # stars keep their natural best position
 TALENT_WEIGHT = 0.30  # share of every position OVR that comes from base stat total
 
 # starters per team: QB1 RB1 WR3 TE1 OL5 | DL4 LB3 CB2 S2  -> scaled to 151 primaries
-QUOTAS = {"QB": 7, "RB": 7, "WR": 21, "TE": 7, "OL": 34, "DL": 27, "LB": 21, "CB": 14, "S": 13}
-assert sum(QUOTAS.values()) == 151
+# Pokemon left out of the draft pool (by Pokedex number). Ratings are scaled across the remaining pool.
+BANNED = {150}  # Mewtwo: too powerful
+
+QUOTAS = {"QB": 7, "RB": 7, "WR": 21, "TE": 7, "OL": 34, "DL": 27, "LB": 21, "CB": 14, "S": 12}
+assert sum(QUOTAS.values()) == 151 - len(BANNED)
 
 
 def zscores(vals):
@@ -69,9 +72,9 @@ def to_rating(z):
 
 
 def main():
-    rows = list(csv.DictReader(open(SRC, encoding="utf-8")))
+    rows = [r for r in csv.DictReader(open(SRC, encoding="utf-8")) if int(r["id"]) not in BANNED]
     n = len(rows)
-    assert n == 151, n
+    assert n == 151 - len(BANNED), n
 
     def maturity(r):
         # fully evolved / legendary = mature; mid-stage partially; babies lowest

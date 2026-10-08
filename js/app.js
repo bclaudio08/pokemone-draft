@@ -104,8 +104,10 @@
   let aiTimer = null;
   function freshUI() { return { pos: "BEST", type: "", q: "", natural: false, selected: null, tab: "pool", home: "create", rtab: "season" }; }
 
+  // snake reverses the order every other round; linear keeps the same order every round
   const teamOnClock = (pick, st = S) => {
     const n = st.order.length, round = Math.floor(pick / n), i = pick % n;
+    if (st.orderType === "linear") return st.order[i];
     return round % 2 === 0 ? st.order[i] : st.order[n - 1 - i];
   };
   const openSlots = team => SLOTS.filter(s => !team.roster[s.id]);
@@ -120,7 +122,7 @@
 
   /* ----- practice (local) ----- */
 
-  function newPractice(teamName, slot, numTeams) {
+  function newPractice(teamName, slot, numTeams, orderType) {
     const n = Math.min(6, Math.max(2, Number(numTeams) || SOLO_TEAMS));
     const names = [...AI_NAMES].sort(() => Math.random() - 0.5);
     const user = slot === "random" || Number(slot) > n ? Math.floor(Math.random() * n) : Number(slot) - 1;
@@ -130,6 +132,7 @@
       fav: TYPES[Math.floor(Math.random() * TYPES.length)],
     }));
     S = { mode: "solo", teams, user, pick: 0, order: teams.map((_, i) => i), taken: [], log: [], done: false,
+          orderType: orderType === "linear" ? "linear" : "snake",
           seasonSeed: Math.random().toString(36).slice(2, 10) };
     saveSolo();
   }
@@ -176,7 +179,7 @@
       teams, user: mine ? mine.seat : -1, pick: r.pick, order: r.draft_order || [],
       taken: snap.picks.map(p => p.pid),
       log: snap.picks.map(p => ({ pick: p.pick_no, team: p.seat, pid: p.pid, slot: p.slot, auto: p.auto })),
-      done: r.status === "done", seasonSeed: r.id,
+      done: r.status === "done", seasonSeed: r.id, orderType: r.draft_type || "snake",
     };
   }
 
@@ -334,7 +337,7 @@
       <section class="setup">
         <div class="setup-copy">
           <h1>Draft the original 151 onto a football team.</h1>
-          <p class="lede">Each team drafts 22 Pokémon in a snake draft: 11 on offense, 11 on defense. Start a room and send the link to friends, or practice against AI.</p>
+          <p class="lede">Each team drafts 22 Pokémon: 11 on offense, 11 on defense. Start a room and send the link to friends, or practice against AI.</p>
           <p class="fine">Every Pokémon is rated at all nine positions from its real base stats, height and weight, so a great quarterback might be a decent running back.</p>
           <div class="modes" role="tablist" aria-label="How do you want to draft?">
             ${Object.entries(modes).map(([k, v]) => `<button type="button" role="tab" data-home="${k}" aria-selected="${ui.home === k}" ${!Net.available && k !== "solo" ? "disabled" : ""}>${v}</button>`).join("")}
@@ -345,6 +348,8 @@
             <label>Your team name<input name="name" maxlength="28" placeholder="Pallet Town Pros" value="${esc(lastName())}" autocomplete="off" required></label>
             <fieldset><legend>Number of teams</legend>${seg("teams", [2,3,4,5,6], 4)}</fieldset>
             <fieldset><legend>Time per pick</legend>${seg("timer", [0,30,60,90], 60, v => v ? v + " sec" : "No limit")}</fieldset>
+            <fieldset><legend>Draft order</legend>${seg("order", ["snake","linear"], store.get("g151-order") || "snake", v => v === "snake" ? "Snake" : "Same every round")}</fieldset>
+            <p class="fine">Snake reverses the order every round, so the team that picks last in round 1 picks first in round 2. Same every round keeps one order all draft.</p>
             <p class="fine">Seats nobody claims become AI teams when you start the draft.</p>
             <button class="btn primary" type="submit">Create room</button>
           </form>` : ""}
@@ -358,6 +363,7 @@
           <form id="soloForm" class="setup-form">
             <label>Team name<input name="name" maxlength="28" placeholder="Pallet Town Pros" value="${esc(lastName())}" autocomplete="off" required></label>
             <fieldset><legend>Number of teams</legend>${seg("teams", [2,3,4,5,6], store.get("g151-solo-teams") || 6)}</fieldset>
+            <fieldset><legend>Draft order</legend>${seg("order", ["snake","linear"], store.get("g151-order") || "snake", v => v === "snake" ? "Snake" : "Same every round")}</fieldset>
             <fieldset><legend>Your draft slot</legend><div id="slotSeg"></div></fieldset>
             <button class="btn primary" type="submit">Start practice draft</button>
             ${resume ? `<button class="btn ghost" type="button" id="resumeBtn">Resume ${esc(saved.teams[saved.user].name)} (pick ${saved.pick + 1})</button>` : ""}
@@ -373,7 +379,8 @@
       const fd = new FormData(e.target); store.set("g151-name", fd.get("name"));
       const btn = e.target.querySelector("[type=submit]"); btn.dataset.label = btn.textContent; busy(e.target, true);
       try {
-        const code = await roomCall("g151_create_room", { p_num_teams: +fd.get("teams"), p_pick_seconds: +fd.get("timer"), p_team_name: fd.get("name") });
+        store.set("g151-order", fd.get("order"));
+        const code = await roomCall("g151_create_room", { p_num_teams: +fd.get("teams"), p_pick_seconds: +fd.get("timer"), p_team_name: fd.get("name"), p_draft_type: fd.get("order") });
         ui = freshUI(); await openRoom(code);
       } catch { busy(e.target, false); }
     });
@@ -399,7 +406,8 @@
     soloForm?.addEventListener("submit", e => {
       e.preventDefault();
       const fd = new FormData(e.target); store.set("g151-name", fd.get("name")); store.set("g151-solo-teams", +fd.get("teams"));
-      newPractice(fd.get("name"), fd.get("slot"), fd.get("teams"));
+      store.set("g151-order", fd.get("order"));
+      newPractice(fd.get("name"), fd.get("slot"), fd.get("teams"), fd.get("order"));
       ui = freshUI(); runAI();
     });
     $("#resumeBtn")?.addEventListener("click", () => { S = saved; ui = freshUI(); runAI(); });
@@ -421,8 +429,8 @@
             ${S.isHost ? `<button class="btn ghost" type="button" id="startBtn">Start draft (${filled} of ${n} seats filled)</button>` : ""}
           </div>
           <p class="fine">${S.isHost
-            ? (filled < n ? `${n - filled} open ${n - filled === 1 ? "seat becomes an AI team" : "seats become AI teams"} when you start. ` : "") + `Draft order is randomized at the start. ${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds; when time runs out, the best available player is picked automatically.` : "There's no pick timer."}`
-            : `Waiting for ${esc(host.name)} to start the draft. ${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds.` : ""}`}</p>
+            ? (filled < n ? `${n - filled} open ${n - filled === 1 ? "seat becomes an AI team" : "seats become AI teams"} when you start. ` : "") + `${S.orderType === "linear" ? "Same order every round" : "Snake draft"}, with the order randomized at the start. ${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds; when time runs out, the best available player is picked automatically.` : "There's no pick timer."}`
+            : `Waiting for ${esc(host.name)} to start the draft. ${S.orderType === "linear" ? "Same order every round. " : "Snake draft. "}${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds.` : ""}`}</p>
         </div>
         <ol class="seats">
           ${S.teams.map((t, i) => `<li class="${i === S.user ? "mine" : ""} ${t.claimed ? "" : "open"}">
@@ -862,7 +870,8 @@
   function renderHow() {
     const fmt = f => Object.entries(f).map(([k, w]) => `${w < 0 ? "minus " : ""}${Math.round(Math.abs(w) * 100)}% ${({hp:"HP",attack:"Attack",defense:"Defense",sp_attack:"Sp. Atk",sp_defense:"Sp. Def",speed:"Speed",logw:"weight",logh:"height",maturity:"evolution stage"})[k] || (meta.attrNames[k] || k).toLowerCase()}`).join(", ");
     $("#howBody").innerHTML = `
-      <p>Ratings are calculated, not hand-picked. Each Pokémon's base stats, height and weight feed ten football attributes on a 40–99 scale, where 70 is average among the 151.</p>
+      <p>Mewtwo is left out of the draft pool for balance, so 150 Pokémon are available.</p>
+      <p>Ratings are calculated, not hand-picked. Each Pokémon's base stats, height and weight feed ten football attributes on a 40–99 scale, where 70 is average among the pool.</p>
       <h3>Attributes</h3>
       <dl class="how">${ATTRS.map(a => `<dt>${meta.attrNames[a]}</dt><dd>${fmt(meta.attrFormulas[a])}</dd>`).join("")}</dl>
       <h3>Position ratings</h3>
