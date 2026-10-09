@@ -452,3 +452,15 @@ legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
   .box-score-line { grid-template-columns: 1fr; }
   .boxscore { padding: 4px 12px 20px; }
 }
+
+/* ---------- big leagues ---------- */
+.inline-select { display: grid; gap: 6px; font-weight: 600; }
+.inline-select select { min-height: 46px; padding: 0 12px; border: 2px solid var(--ink); border-radius: var(--r-sm); background: var(--paper); font-weight: 600; max-width: 460px; }
+.conf-label { font: 800 20px/1 var(--display); margin: 18px 0 6px; color: var(--turf); }
+.rtab-body .tbl + .tbl { margin-top: 10px; }
+.seed { display: inline-grid; place-items: center; min-width: 20px; height: 20px; margin-right: 6px; border-radius: 3px; background: var(--ink); color: var(--flag); font: 800 13px/1 var(--display); }
+.more-games { margin: 8px 0 4px; }
+.more-games summary { cursor: pointer; font-weight: 600; color: var(--ink-2); padding: 6px 0; }
+.more-games .games { margin-top: 6px; }
+.seats { columns: 2 220px; column-gap: 24px; }
+.seats li { break-inside: avoid; }

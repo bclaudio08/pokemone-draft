@@ -7,8 +7,8 @@ create table if not exists public.g151_rooms (
   id            uuid primary key default gen_random_uuid(),
   code          text not null unique,
   host          uuid not null,
-  num_teams     int  not null check (num_teams between 2 and 6),
-  pick_seconds  int  not null default 60 check (pick_seconds in (0, 30, 60, 90)),
+  num_teams     int  not null,
+  pick_seconds  int  not null default 60,
   status        text not null default 'lobby' check (status in ('lobby', 'drafting', 'done')),
   pick          int  not null default 0,
   draft_order   int[] not null default '{}',
@@ -16,6 +16,11 @@ create table if not exists public.g151_rooms (
   deadline      timestamptz,
   created_at    timestamptz not null default now()
 );
+
+alter table public.g151_rooms drop constraint if exists g151_rooms_num_teams_check;
+alter table public.g151_rooms add constraint g151_rooms_num_teams_check check (num_teams between 2 and 32);
+alter table public.g151_rooms drop constraint if exists g151_rooms_pick_seconds_check;
+alter table public.g151_rooms add constraint g151_rooms_pick_seconds_check check (pick_seconds in (0, 15, 30, 60, 90));
 
 alter table public.g151_rooms add column if not exists draft_type text not null default 'snake';
 do $$ begin
@@ -215,8 +220,9 @@ declare
 begin
   if uid is null then raise exception 'Not signed in'; end if;
   if name = '' then raise exception 'Enter a team name'; end if;
-  if p_num_teams not between 2 and 6 then raise exception 'Pick 2 to 6 teams'; end if;
-  if p_pick_seconds not in (0, 30, 60, 90) then raise exception 'Invalid pick timer'; end if;
+  if p_num_teams not between 2 and 32 then raise exception 'Pick 2 to 32 teams'; end if;
+  if coalesce(p_pool, 'gen1') = 'gen1' and p_num_teams > 6 then raise exception 'The Original 150 pool fits up to 6 teams. Pick All Pokémon for bigger leagues.'; end if;
+  if p_pick_seconds not in (0, 15, 30, 60, 90) then raise exception 'Invalid pick timer'; end if;
   if coalesce(p_draft_type, 'snake') not in ('snake', 'linear') then raise exception 'Invalid draft order'; end if;
   if coalesce(p_pool, 'gen1') not in ('gen1', 'all') then raise exception 'Invalid Pokémon pool'; end if;
 
@@ -276,7 +282,10 @@ returns void language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := auth.uid();
   r g151_rooms;
-  ai_names text[] := array['Pewter Boulders','Cerulean Surge','Vermilion Voltage','Celadon Thorns','Saffron Minds','Cinnabar Blaze','Fuchsia Venom','Lavender Haunts','Viridian Rangers'];
+  ai_names text[] := array['Pewter Boulders','Cerulean Surge','Vermilion Voltage','Celadon Thorns','Saffron Minds','Cinnabar Blaze','Fuchsia Venom','Lavender Haunts','Viridian Rangers','Pallet Pioneers',
+    'Violet Gales','Azalea Swarm','Goldenrod Rush','Ecruteak Spirits','Olivine Ironclads','Cianwood Brawlers','Mahogany Frost','Blackthorn Dragons','Rustboro Rockets','Dewford Breakers',
+    'Mauville Sparks','Lavaridge Heat','Fortree Flyers','Lilycove Tide','Mossdeep Stars','Sootopolis Depths','Oreburgh Miners','Eterna Grove','Hearthome Hearts','Veilstone Fists',
+    'Pastoria Marsh','Snowpoint Blizzard','Sunyshore Beacons','Castelia Skyline','Nimbasa Thunder','Lumiose Lights','Hau''oli Waves','Hammerlocke Knights','Mesagoza Academy','Levincia Current'];
 begin
   select * into r from g151_rooms where code = upper(btrim(p_code)) for update;
   if not found then raise exception 'No room with that code'; end if;
@@ -353,8 +362,16 @@ begin
   select is_ai into v_ai from g151_seats where room_id = r.id and seat = v_seat;
 
   if v_ai and now() >= r.last_pick_at + interval '900 milliseconds' then
-    select * into bp from g151_best_pick(r.id, v_seat);
-    perform g151_do_pick(r, v_seat, bp.pid, bp.slot, true);
+    -- big leagues: make a run of AI picks at once (up to 8, stopping when a human is up)
+    for i in 1..(case when r.num_teams > 8 then 8 else 1 end) loop
+      select * into bp from g151_best_pick(r.id, v_seat);
+      perform g151_do_pick(r, v_seat, bp.pid, bp.slot, true);
+      select * into r from g151_rooms where id = r.id;
+      exit when r.status <> 'drafting';
+      v_seat := g151_on_clock(r.pick, r.draft_order, r.draft_type);
+      select is_ai into v_ai from g151_seats where room_id = r.id and seat = v_seat;
+      exit when not v_ai;
+    end loop;
     return true;
   elsif not v_ai and r.deadline is not null and now() >= r.deadline then
     select * into bp from g151_best_pick(r.id, v_seat);

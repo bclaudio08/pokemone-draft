@@ -210,7 +210,9 @@
 
   // norms: {n: {QB:[mean,sd], ..., TEAM:[mean,sd]}} from simulated drafts (js/norms.js)
   function grades(roster, byId, numTeams, norms) {
-    const N = norms[Math.min(6, Math.max(2, numTeams))];
+    const sizes = Object.keys(norms).map(Number).sort((a, b) => a - b);
+    const size = sizes.filter(k => k <= numTeams).pop() || sizes[0];
+    const N = norms[size];
     const sc = groupScores(roster, byId);
     const out = {};
     for (const g of [...Object.keys(GROUPS), "TEAM"]) {
@@ -412,9 +414,60 @@
     return weeks;
   }
 
+  /* ---------- conferences (8+ teams) ---------- */
+  const CONF_NAMES = ["Indigo Conference", "Orange Conference"];
+  const DIV_NAMES = [["Kanto", "Johto", "Hoenn", "Sinnoh"], ["Unova", "Kalos", "Alola", "Galar"]];
+  const PLAYOFF_ROUND_NAMES = { wild: "Wild card round", div: "Divisional round", semi: "Conference semifinals", conf: "Conference championships", final: "Championship" };
+
+  // 8-15 teams: two conferences; 16-23: two divisions each; 24-32: four divisions each (NFL-style).
+  function leagueStructure(n) {
+    if (n < 8) return null;
+    const nd = n >= 24 ? 4 : n >= 16 ? 2 : 1;
+    const conferences = [0, 1].map(c => ({ name: CONF_NAMES[c], divisions: [...Array(nd)].map((_, d) => ({ name: nd > 1 ? DIV_NAMES[c][d] : null, teams: [] })) }));
+    for (let i = 0; i < n; i++) conferences[i % 2].divisions[Math.floor(i / 2) % nd].teams.push(i);
+    const confOf = [], divOf = [];
+    conferences.forEach((C, ci) => C.divisions.forEach((D, di) => D.teams.forEach(t => { confOf[t] = ci; divOf[t] = ci * 4 + di; })));
+    return { conferences, confOf, divOf, hasDivisions: nd > 1, playoffPerConf: n >= 24 ? 6 : n >= 12 ? 4 : 2 };
+  }
+
+  // 10 weeks: each week pair everyone up, favoring opponents not yet played, then division and conference rivals.
+  function conferenceSchedule(n, L, rnd, weeksCount = 10) {
+    const met = {};
+    const key = (a, b) => a < b ? a + "-" + b : b + "-" + a;
+    const weeks = [];
+    const byes = Array(n).fill(0);
+    for (let w = 0; w < weeksCount; w++) {
+      const order = [...Array(n).keys()];
+      for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+      const used = new Set(), games = [];
+      if (n % 2) { // odd league: the bye goes to a team with the fewest byes so far
+        const fewest = Math.min(...byes);
+        const sitter = order.find(t => byes[t] === fewest);
+        byes[sitter]++; used.add(sitter);
+      }
+      for (const t of order) {
+        if (used.has(t)) continue;
+        let best = null, bestScore = -Infinity;
+        for (const u of order) {
+          if (u === t || used.has(u)) continue;
+          const times = met[key(t, u)] || 0;
+          const score = -10 * times + (L.divOf[t] === L.divOf[u] ? 3 : L.confOf[t] === L.confOf[u] ? 2 : 0) + rnd() * 0.5;
+          if (score > bestScore) { bestScore = score; best = u; }
+        }
+        if (best == null) continue; // odd team out has a bye
+        used.add(t); used.add(best);
+        met[key(t, best)] = (met[key(t, best)] || 0) + 1;
+        games.push(rnd() < 0.5 ? [t, best] : [best, t]);
+      }
+      weeks.push(games);
+    }
+    return weeks;
+  }
+
   // teams: [{name, roster}] (all full). Returns every game, standings, playoffs, leaders and awards.
   function simSeason(teams, byId, seed) {
     const n = teams.length;
+    if (n >= 8) return simConferenceSeason(teams, byId, seed);
     let weeks = n === 2 ? [[[0, 1]], [[1, 0]], [[0, 1]]] : n === 3 ? roundRobin(3).concat(roundRobin(3).map(w => w.map(([a, b]) => [b, a]))) : roundRobin(n);
     const rec = teams.map(() => ({ w: 0, l: 0, t: 0, pf: 0, pa: 0 }));
     const season = { weeks: [], playoffs: [], champion: null };
@@ -453,6 +506,10 @@
       season.playoffs = [{ label: "Championship", games: [f] }];
       season.champion = f.winner === 0 ? f.a : f.b;
     }
+    return finishSeason(season, totals, rec);
+  }
+
+  function finishSeason(season, totals, rec) {
     // leaders and MVP across the whole season (playoffs included)
     const all = totals.flatMap(t => Object.values(t));
     const top = (f, k = 5) => all.filter(x => x[f] > 0).sort((a, b) => b[f] - a[f] || a.pid - b.pid).slice(0, k);
@@ -464,9 +521,77 @@
     return season;
   }
 
+  function simConferenceSeason(teams, byId, seed) {
+    const n = teams.length;
+    const L = leagueStructure(n);
+    const weeks = n === 8 ? roundRobin(8) : conferenceSchedule(n, L, rngFrom(`${seed}|schedule`));
+    const rec = teams.map(() => ({ w: 0, l: 0, t: 0, pf: 0, pa: 0 }));
+    const season = { weeks: [], playoffs: [], champion: null, structure: L };
+    const totals = teams.map(() => ({}));
+    const addStats = (t, lines) => { for (const l of lines) { const acc = totals[t][l.pid] = totals[t][l.pid] || { ...newLine(), pid: l.pid, name: l.name, slot: l.slot, team: t, gp: 0 }; acc.gp++; for (const f of Object.keys(newLine())) acc[f] = f === "long" ? Math.max(acc.long, l.long) : acc[f] + l[f]; } };
+    const play = (a, b, label, noTies) => {
+      const g = simGame(teams[a], teams[b], byId, `${seed}|${label}|${a}-${b}`, { noTies });
+      g.a = a; g.b = b; g.label = label;
+      addStats(a, g.lines[0]); addStats(b, g.lines[1]);
+      return g;
+    };
+    const winnerOf = g => g.winner === 0 ? g.a : g.b;
+    weeks.forEach((games, wi) => {
+      const out = games.map(([a, b]) => {
+        const g = play(a, b, `Week ${wi + 1}`, false);
+        const [sa, sb] = g.score;
+        rec[a].pf += sa; rec[a].pa += sb; rec[b].pf += sb; rec[b].pa += sa;
+        if (sa > sb) { rec[a].w++; rec[b].l++; } else if (sb > sa) { rec[b].w++; rec[a].l++; } else { rec[a].t++; rec[b].t++; }
+        return g;
+      });
+      season.weeks.push({ label: `Week ${wi + 1}`, games: out });
+    });
+    const tiebreak = i => hashStr(`${seed}|tb|${i}`);
+    const cmp = (x, y) => (rec[y].w + rec[y].t / 2) - (rec[x].w + rec[x].t / 2) || (rec[y].pf - rec[y].pa) - (rec[x].pf - rec[x].pa) || rec[y].pf - rec[x].pf || tiebreak(x) - tiebreak(y);
+    season.standings = [...Array(n).keys()].sort(cmp).map(i => ({ team: i, ...rec[i] }));
+
+    // seeds per conference: division winners first, then the best remaining records
+    const P = L.playoffPerConf;
+    season.seeds = L.conferences.map(C => {
+      const winners = C.divisions.length > 1 ? C.divisions.map(D => D.teams.slice().sort(cmp)[0]).sort(cmp) : [];
+      const rest = C.divisions.flatMap(D => D.teams).filter(t => !winners.includes(t)).sort(cmp);
+      return [...winners, ...rest].slice(0, P);
+    });
+    const R = PLAYOFF_ROUND_NAMES;
+    const champs = [];
+    const roundGames = { };
+    const push = (label, g) => { (roundGames[label] = roundGames[label] || []).push(g); };
+    // each conference bracket is decided round by round, both conferences in the same round
+    let alive = season.seeds.map(s => s.slice());
+    if (P === 6) {
+      alive = alive.map(s => {
+        const g1 = play(s[2], s[5], R.wild, true), g2 = play(s[3], s[4], R.wild, true);
+        push(R.wild, g1); push(R.wild, g2);
+        return [s[0], s[1], winnerOf(g1), winnerOf(g2)].sort((a, b) => season.seeds.flat().indexOf(a) - season.seeds.flat().indexOf(b));
+      });
+      alive = alive.map(s => {
+        const g1 = play(s[0], s[3], R.div, true), g2 = play(s[1], s[2], R.div, true);
+        push(R.div, g1); push(R.div, g2);
+        return [winnerOf(g1), winnerOf(g2)];
+      });
+    } else if (P === 4) {
+      alive = alive.map(s => {
+        const g1 = play(s[0], s[3], R.semi, true), g2 = play(s[1], s[2], R.semi, true);
+        push(R.semi, g1); push(R.semi, g2);
+        return [winnerOf(g1), winnerOf(g2)];
+      });
+    }
+    alive.forEach(s => { const g = play(s[0], s[1], R.conf, true); push(R.conf, g); champs.push(winnerOf(g)); });
+    const f = play(champs[0], champs[1], R.final, true);
+    push(R.final, f);
+    season.playoffs = [R.wild, R.div, R.semi, R.conf, R.final].filter(l => roundGames[l]).map(l => ({ label: l, games: roundGames[l] }));
+    season.champion = winnerOf(f);
+    return finishSeason(season, totals, rec);
+  }
+
   return {
     SLOTS, SHARE_ORDER, SLOT_BY_ID, POSITIONS, POS_NAMES, GROUP_NAMES, GROUPS, ROUNDS, POS_WEIGHT,
     AI_STYLES, STYLE_KEYS, starValue, hashStr, rngFrom, chemistry, slotRating, teamRating,
-    aiChoose, groupScores, grades, letter, simGame, simSeason, fpts,
+    aiChoose, groupScores, grades, letter, simGame, simSeason, leagueStructure, fpts,
   };
 });

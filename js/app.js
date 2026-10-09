@@ -47,7 +47,11 @@
     fighting:"#C22E28", poison:"#A33EA1", ground:"#E2BF65", flying:"#A98FF3", psychic:"#F95587", bug:"#A6B91A",
     rock:"#B6A136", ghost:"#735797", dragon:"#6F35FC", dark:"#705746", steel:"#B7B7CE", fairy:"#D685AD",
   };
-  const AI_NAMES = ["Pewter Boulders","Cerulean Surge","Vermilion Voltage","Celadon Thorns","Saffron Minds","Cinnabar Blaze","Fuchsia Venom","Lavender Haunts","Viridian Rangers"];
+  const AI_NAMES = ["Pewter Boulders","Cerulean Surge","Vermilion Voltage","Celadon Thorns","Saffron Minds","Cinnabar Blaze","Fuchsia Venom","Lavender Haunts","Viridian Rangers","Pallet Pioneers",
+    "Violet Gales","Azalea Swarm","Goldenrod Rush","Ecruteak Spirits","Olivine Ironclads","Cianwood Brawlers","Mahogany Frost","Blackthorn Dragons","Rustboro Rockets","Dewford Breakers",
+    "Mauville Sparks","Lavaridge Heat","Fortree Flyers","Lilycove Tide","Mossdeep Stars","Sootopolis Depths","Oreburgh Miners","Eterna Grove","Hearthome Hearts","Veilstone Fists",
+    "Pastoria Marsh","Snowpoint Blizzard","Sunyshore Beacons","Castelia Skyline","Nimbasa Thunder","Lumiose Lights","Hau'oli Waves","Hammerlocke Knights","Mesagoza Academy","Levincia Current"];
+  const maxTeams = pool => pool === "all" ? 32 : 6;
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const app = $("#app");
@@ -152,7 +156,7 @@
 
   function newPractice(teamName, slot, numTeams, orderType, pool) {
     usePool(poolKey(pool));
-    const n = Math.min(6, Math.max(2, Number(numTeams) || SOLO_TEAMS));
+    const n = Math.min(maxTeams(poolKey(pool)), Math.max(2, Number(numTeams) || SOLO_TEAMS));
     const names = [...AI_NAMES].sort(() => Math.random() - 0.5);
     const user = slot === "random" || Number(slot) > n ? Math.floor(Math.random() * n) : Number(slot) - 1;
     const teams = Array.from({ length: n }, (_, i) => ({
@@ -203,7 +207,7 @@
     const t = teamOnClock(S.pick);
     if (!S.teams[t].ai) return render();
     render();
-    aiTimer = setTimeout(() => { aiPick(t); runAI(); }, AI_DELAY);
+    aiTimer = setTimeout(() => { aiPick(t); runAI(); }, S.teams.length > 8 ? 60 : AI_DELAY);
   }
 
   /* ----- online rooms ----- */
@@ -392,8 +396,8 @@
           ${ui.home === "create" ? `
           <form id="createForm" class="setup-form">
             <label>Your team name<input name="name" maxlength="28" placeholder="Pallet Town Pros" value="${esc(lastName())}" autocomplete="off" required></label>
-            <fieldset><legend>Number of teams</legend>${seg("teams", [2,3,4,5,6], 4)}</fieldset>
-            <fieldset><legend>Time per pick</legend>${seg("timer", [0,30,60,90], 60, v => v ? v + " sec" : "No limit")}</fieldset>
+            <label class="inline-select">Number of teams<select name="teams" data-default="${store.get("g151-room-teams") || 4}"></select></label>
+            <fieldset><legend>Time per pick</legend>${seg("timer", [0,15,30,60,90], 60, v => v ? v + " sec" : "No limit")}</fieldset>
             <fieldset><legend>Pokémon pool</legend>${seg("pool", ["gen1","all"], store.get("g151-pool") || "gen1", v => v === "gen1" ? "Original 150" : `All Pokémon (${ALL_COUNT.toLocaleString()})`)}</fieldset>
             <fieldset><legend>Draft order</legend>${seg("order", ["snake","linear"], store.get("g151-order") || "snake", v => v === "snake" ? "Snake" : "Same every round")}</fieldset>
             <p class="fine">Snake reverses the order every round, so the team that picks last in round 1 picks first in round 2. Same every round keeps one order all draft.</p>
@@ -409,10 +413,10 @@
           ${ui.home === "solo" ? `
           <form id="soloForm" class="setup-form">
             <label>Team name<input name="name" maxlength="28" placeholder="Pallet Town Pros" value="${esc(lastName())}" autocomplete="off" required></label>
-            <fieldset><legend>Number of teams</legend>${seg("teams", [2,3,4,5,6], store.get("g151-solo-teams") || 6)}</fieldset>
+            <label class="inline-select">Number of teams<select name="teams" data-default="${store.get("g151-solo-teams") || 6}"></select></label>
             <fieldset><legend>Pokémon pool</legend>${seg("pool", ["gen1","all"], store.get("g151-pool") || "gen1", v => v === "gen1" ? "Original 150" : `All Pokémon (${ALL_COUNT.toLocaleString()})`)}</fieldset>
             <fieldset><legend>Draft order</legend>${seg("order", ["snake","linear"], store.get("g151-order") || "snake", v => v === "snake" ? "Snake" : "Same every round")}</fieldset>
-            <fieldset><legend>Your draft slot</legend><div id="slotSeg"></div></fieldset>
+            <label class="inline-select">Your draft slot<select name="slot"></select></label>
             <button class="btn primary" type="submit">Start practice draft</button>
             ${resume ? `<button class="btn ghost" type="button" id="resumeBtn">Resume ${esc(saved.teams[saved.user].name)} (pick ${saved.pick + 1})</button>` : ""}
           </form>` : ""}
@@ -428,7 +432,7 @@
       const btn = e.target.querySelector("[type=submit]"); btn.dataset.label = btn.textContent; busy(e.target, true);
       try {
         store.set("g151-order", fd.get("order"));
-        store.set("g151-pool", fd.get("pool"));
+        store.set("g151-pool", fd.get("pool")); store.set("g151-room-teams", +fd.get("teams"));
         const code = await roomCall("g151_create_room", { p_num_teams: +fd.get("teams"), p_pick_seconds: +fd.get("timer"), p_team_name: fd.get("name"), p_draft_type: fd.get("order"), p_pool: poolKey(fd.get("pool")) });
         ui = freshUI(); await openRoom(code);
       } catch { busy(e.target, false); }
@@ -441,17 +445,31 @@
       try { await roomCall("g151_join_room", { p_code: code, p_team_name: fd.get("name") }); ui = freshUI(); await openRoom(code); }
       catch { busy(e.target, false); }
     });
-    const soloForm = $("#soloForm");
-    if (soloForm) {
+    // team-count menus follow the chosen pool (Original 150: up to 6 teams; All Pokemon: up to 32)
+    for (const form of [$("#createForm"), $("#soloForm")]) {
+      if (!form) continue;
+      const teamsSel = form.querySelector("select[name=teams]");
+      const slotSel = form.querySelector("select[name=slot]");
       const drawSlots = () => {
-        const n = +new FormData(soloForm).get("teams");
-        const cur = soloForm.querySelector("input[name=slot]:checked")?.value || "random";
-        const keep = cur === "random" || +cur <= n ? cur : "random";
-        $("#slotSeg").outerHTML = `<div id="slotSeg">${seg("slot", [...Array(n).keys()].map(i => i + 1).concat("random"), keep, v => v === "random" ? "Random" : v)}</div>`;
+        if (!slotSel) return;
+        const n = +teamsSel.value, cur = slotSel.value || "random";
+        slotSel.innerHTML = `<option value="random">Random</option>` + [...Array(n).keys()].map(i => `<option value="${i + 1}">${i + 1}</option>`).join("");
+        slotSel.value = cur !== "random" && +cur <= n ? cur : "random";
       };
-      drawSlots();
-      soloForm.querySelectorAll("input[name=teams]").forEach(r => r.addEventListener("change", drawSlots));
+      const drawTeams = () => {
+        const pool = poolKey(new FormData(form).get("pool"));
+        const cur = +(teamsSel.value || teamsSel.dataset.default || 4);
+        const max = maxTeams(pool);
+        teamsSel.innerHTML = [...Array(max - 1).keys()].map(i => i + 2).map(v =>
+          `<option value="${v}">${v} teams${v >= 8 ? (v >= 24 ? ", conferences and divisions" : v >= 16 ? ", conferences and divisions" : ", two conferences") : ""}</option>`).join("");
+        teamsSel.value = String(Math.min(cur, max));
+        drawSlots();
+      };
+      drawTeams();
+      form.querySelectorAll("input[name=pool]").forEach(r => r.addEventListener("change", drawTeams));
+      teamsSel.addEventListener("change", drawSlots);
     }
+    const soloForm = $("#soloForm");
     soloForm?.addEventListener("submit", async e => {
       e.preventDefault();
       const fd = new FormData(e.target); store.set("g151-name", fd.get("name")); store.set("g151-solo-teams", +fd.get("teams"));
@@ -482,7 +500,7 @@
             ${S.isHost ? `<button class="btn ghost" type="button" id="startBtn">Start draft (${filled} of ${n} seats filled)</button>` : ""}
           </div>
           <p class="fine">${S.isHost
-            ? (filled < n ? `${n - filled} open ${n - filled === 1 ? "seat becomes an AI team" : "seats become AI teams"} when you start. ` : "") + `${poolLabel(S.pool)}. ${S.orderType === "linear" ? "Same order every round" : "Snake draft"}, with the order randomized at the start. ${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds; when time runs out, the best available player is picked automatically.` : "There's no pick timer."}`
+            ? (filled < n ? `${n - filled} open ${n - filled === 1 ? "seat becomes an AI team" : "seats become AI teams"} when you start. ` : "") + `${poolLabel(S.pool)}. ${n >= 8 ? `${n} teams split into two conferences${n >= 16 ? " with divisions" : ""}. ` : ""}${S.orderType === "linear" ? "Same order every round" : "Snake draft"}, with the order randomized at the start. ${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds; when time runs out, the best available player is picked automatically.` : "There's no pick timer."}`
             : `Waiting for ${esc(host.name)} to start the draft. ${poolLabel(S.pool)}. ${S.orderType === "linear" ? "Same order every round. " : "Snake draft. "}${S.pickSeconds ? `Each pick has ${S.pickSeconds} seconds.` : ""}`}</p>
         </div>
         <ol class="seats">
@@ -695,7 +713,27 @@
   function nextLabel(rd, n) {
     if (rd.label === "Semifinals") return "Play the semifinals";
     if (rd.label === "Championship") return "Play the championship";
+    if (/round$|semifinals$|championships$/.test(rd.label)) return "Play the " + rd.label.toLowerCase();
     return "Play " + rd.label.toLowerCase();
+  }
+
+  function standingsTable(rows, opts = {}) {
+    const ties = rows.some(x => x.t);
+    return `<table class="tbl"><thead><tr><th>${opts.title ? esc(opts.title) : "Team"}</th><th>W</th><th>L</th>${ties ? "<th>T</th>" : ""}<th>PF</th><th>PA</th></tr></thead><tbody>
+      ${rows.map(x => `<tr class="${x.team === S.user ? "mine" : ""}"><td>${opts.seedOf && opts.seedOf[x.team] ? `<span class="seed">${opts.seedOf[x.team]}</span>` : ""}${esc(S.teams[x.team].name)}${x.team === opts.champ ? ` <span class="trophy">Champions</span>` : ""}</td><td>${x.w}</td><td>${x.l}</td>${ties ? `<td>${x.t}</td>` : ""}<td>${x.pf}</td><td>${x.pa}</td></tr>`).join("")}
+    </tbody></table>`;
+  }
+
+  function standingsBlock(season, table, regDone, champ) {
+    const L = season.structure;
+    if (!L) return standingsTable(table, { champ });
+    const rank = new Map(table.map((x, i) => [x.team, i]));
+    const seedOf = {};
+    if (regDone && season.seeds) season.seeds.forEach(s => s.forEach((t, i) => { seedOf[t] = i + 1; }));
+    return L.conferences.map(C => `
+      <h4 class="conf-label">${esc(C.name)}</h4>
+      ${C.divisions.map(D => standingsTable(D.teams.map(t => table[rank.get(t)]).sort((a, b) => rank.get(a.team) - rank.get(b.team)), { title: D.name || "Team", seedOf, champ })).join("")}`).join("")
+      + (regDone && season.seeds ? `<p class="fine">Numbers are playoff seeds. ${L.hasDivisions ? "Division winners are seeded first. " : ""}${L.playoffPerConf === 6 ? "Seeds 1 and 2 get a bye in the wild card round." : ""}</p>` : "");
   }
 
   function gameCard(g, ri, gi) {
@@ -722,7 +760,6 @@
     const done = prog >= R.length;
     const regWeeks = Math.min(prog, season.weeks.length);
     const table = done ? season.standings : standingsFrom(season, regWeeks);
-    const ties = table.some(x => x.t);
     const champ = done ? season.champion : null;
     const revealed = R.slice(0, prog);
     const players = aggregate(revealed.flatMap(r => r.games));
@@ -733,7 +770,7 @@
       : `<div class="season-ctl">
           <button class="btn primary" type="button" id="playNext">${nextLabel(R[prog], S.teams.length)}</button>
           ${R.length - prog > 1 ? `<button class="btn ghost" type="button" id="playAll">Play the rest</button>` : ""}
-          <p class="fine">${prog === 0 ? `${season.weeks.length} ${S.teams.length === 2 ? "games" : "weeks"}, then ${season.playoffs.length ? (season.playoffs.length > 1 ? "semifinals and a championship" : "a championship game") : "the series decides the title"}. Every snap is simulated from your roster.` : ""}</p>
+          <p class="fine">${prog === 0 ? `${season.weeks.length} ${S.teams.length === 2 ? "games" : "weeks"}, then ${season.structure ? `the top ${season.structure.playoffPerConf} in each conference make the playoffs (${season.playoffs.map(r => r.label.toLowerCase()).join(", ")})` : season.playoffs.length ? (season.playoffs.length > 1 ? "semifinals and a championship" : "a championship game") : "the series decides the title"}. Every snap is simulated from your roster.` : ""}</p>
         </div>`;
     const awards = done && season.awards ? `<h3>Season awards</h3><div class="awards">${[["Most valuable player", season.awards.mvp], ["Defensive player of the year", season.awards.dpoy]].map(([t, a]) => {
         const p = BY_ID.get(a.pid);
@@ -743,12 +780,18 @@
       ${ctl}
       ${prog ? `
       <h3>Standings</h3>
-      <table class="tbl"><thead><tr><th>Team</th><th>W</th><th>L</th>${ties ? "<th>T</th>" : ""}<th>PF</th><th>PA</th></tr></thead><tbody>
-        ${table.map(x => `<tr class="${x.team === S.user ? "mine" : ""}"><td>${esc(S.teams[x.team].name)}${x.team === champ ? ` <span class="trophy">Champions</span>` : ""}</td><td>${x.w}</td><td>${x.l}</td>${ties ? `<td>${x.t}</td>` : ""}<td>${x.pf}</td><td>${x.pa}</td></tr>`).join("")}
-      </tbody></table>
+      ${standingsBlock(season, table, prog >= season.weeks.length, champ)}
       ${awards}
       <h3>Results</h3>
-      ${revealed.map((rd, ri) => ({ rd, ri })).reverse().map(({ rd, ri }) => `<h4 class="round-label">${rd.label}</h4><div class="games">${rd.games.map((g, gi) => gameCard(g, ri, gi)).join("")}</div>`).join("")}
+      ${revealed.map((rd, ri) => ({ rd, ri })).reverse().map(({ rd, ri }) => {
+        // big weeks: your game up top, the rest one tap away
+        const cards = rd.games.map((g, gi) => ({ g, gi, mine: g.a === S.user || g.b === S.user }));
+        if (cards.length <= 4) return `<h4 class="round-label">${rd.label}</h4><div class="games">${cards.map(c => gameCard(c.g, ri, c.gi)).join("")}</div>`;
+        const mine = cards.filter(c => c.mine), others = cards.filter(c => !c.mine);
+        return `<h4 class="round-label">${rd.label}</h4>
+          ${mine.length ? `<div class="games">${mine.map(c => gameCard(c.g, ri, c.gi)).join("")}</div>` : ""}
+          <details class="more-games"><summary>${mine.length ? "Other games" : "All games"} (${others.length})</summary><div class="games">${others.map(c => gameCard(c.g, ri, c.gi)).join("")}</div></details>`;
+      }).join("")}
       <h3>League leaders</h3>
       <div class="leaders">
         ${leaderBlock("Passing yards", top("pyd"), "pyd")}${leaderBlock("Rushing yards", top("ryd"), "ryd")}${leaderBlock("Receiving yards", top("recyd"), "recyd")}

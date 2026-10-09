@@ -3,7 +3,8 @@
 A Pokémon football draft. Each team drafts 22 of the original 151 Pokémon (11 offense, 11 defense) in a snake draft, then shares its roster with a link.
 
 - **Draft rooms:** the host picks 2–6 teams and a pick timer, then sends a link. Friends join from their own devices and draft live. Unclaimed seats become AI teams.
-- **Practice vs AI:** a 2–6 team draft that runs entirely in the browser.
+- **Practice vs AI:** a draft that runs entirely in the browser.
+- **League size:** 2–6 teams with the Original 150; 2–32 with All Pokémon. From 8 teams the league splits into two conferences (Indigo and Orange), with divisions from 16 teams (four per conference from 24). Bigger leagues play a 10-week schedule weighted toward division and conference rivals, then conference playoffs: top 2 per conference (8–11 teams), top 4 (12–23), or top 6 with byes for seeds 1–2 (24–32). Division winners are seeded first.
 - **Two Pokémon pools:** the Original 150 (Mewtwo excluded) or all 1,025 Pokémon with a sprite. Both use the same rating formulas, each scaled against its own pool.
 - **Season:** after the draft, every team plays a simulated season (play it week by week or all at once), then playoffs. Every snap is simulated, so a strong line and running back produce big rushing days. You get box scores, standings, league leaders, MVP and defensive player of the year. Every device gets the same results for the same league.
 - **Draft grades** by position group, plus each team's best-value pick and biggest reach.

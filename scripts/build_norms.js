@@ -6,7 +6,12 @@ const ROOT = path.join(__dirname, "..");
 const E = require(path.join(ROOT, "js/engine.js"));
 const load = f => { const t = fs.readFileSync(path.join(ROOT, f), "utf8"); return JSON.parse(t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1)).pokemon; };
 // big pool: fewer simulated drafts (each pick scans ~1,000 Pokemon)
-const POOLS = [{ key: "gen1", file: "js/data.js", drafts: 300 }, { key: "all", file: "js/data-all.js", drafts: 60 }];
+const POOLS = [
+  { key: "gen1", file: "js/data.js", drafts: 300, sizes: [2, 3, 4, 5, 6] },
+  { key: "all", file: "js/data-all.js", drafts: 60, sizes: [2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 28, 32] },
+];
+// big leagues take longer to simulate, and each draft already holds many teams
+const draftsFor = (pool, n) => n <= 6 ? pool.drafts : Math.max(10, Math.round(pool.drafts * 6 / n));
 let P, byId, TYPES, DRAFTS;
 
 function aiDraft(n, rnd, log) {
@@ -27,10 +32,10 @@ P = load(pool.file); byId = new Map(P.map(p => [p.id, p])); TYPES = [...new Set(
 const t0 = Date.now();
 const norms = {};
 const adpSum = {}, adpCnt = {};
-for (let n = 2; n <= 6; n++) {
+for (const n of pool.sizes) {
   const rnd = E.rngFrom((pool.key === "gen1" ? "" : pool.key + "-") + "norms-" + n);
   const acc = {};
-  for (let d = 0; d < DRAFTS; d++) {
+  for (let d = 0; d < draftsFor(pool, n); d++) {
     const teams = aiDraft(n, rnd, n === 6 ? (pid, pick) => { adpSum[pid] = (adpSum[pid] || 0) + pick; adpCnt[pid] = (adpCnt[pid] || 0) + 1; } : null);
     for (const t of teams) {
       const g = E.groupScores(t.roster, byId);
